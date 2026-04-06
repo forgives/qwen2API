@@ -45,12 +45,13 @@ def start_frontend() -> subprocess.Popen:
     log_file = open(LOGS_DIR / "frontend.log", "w", encoding="utf-8")
     
     # 跨平台调用 npm
-    npm_exec = "npm.cmd" if os.name == "nt" else "npm"
+    is_windows = (os.name == "nt")
+    npm_cmd = "npm run dev" if is_windows else ["npm", "run", "dev"]
     
     proc = subprocess.Popen(
-        [npm_exec, "run", "dev"],
+        npm_cmd,
         cwd=FRONTEND_DIR,
-        shell=(os.name == "nt"), # 在 Windows 上通过 shell 启动 npm 以避免找不到命令
+        shell=is_windows, # 在 Windows 上通过 shell 启动 npm
         stdout=log_file,
         stderr=subprocess.STDOUT
     )
