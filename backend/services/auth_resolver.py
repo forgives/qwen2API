@@ -500,26 +500,54 @@ async def activate_account(acc: Account) -> bool:
             # Step 5: If no token yet, try logging in
             if not token and acc.password:
                 try:
+                    log.info(f"[Activate] 开始尝试重新登录以获取 Token...")
                     await page.goto(f"{BASE_URL}/auth", wait_until="domcontentloaded", timeout=30000)
                     await asyncio.sleep(3)
+                    
+                    # 切换到登录 Tab
+                    log.info(f"[Activate] 尝试点击 Log in 标签页...")
+                    try:
+                        login_tab = await page.query_selector('button:has-text("Log in")') or await page.query_selector('button:has-text("登录")')
+                        if login_tab:
+                            await login_tab.click()
+                            await asyncio.sleep(1)
+                    except Exception:
+                        pass
+                    
+                    log.info(f"[Activate] 填写登录账号密码...")
                     li_email = await page.query_selector('input[placeholder*="Email"]')
                     if li_email:
                         await li_email.fill(acc.email)
                     li_pwd = await page.query_selector('input[type="password"]')
                     if li_pwd:
                         await li_pwd.fill(acc.password)
+                        
                     li_btn = (await page.query_selector('button:has-text("Log in")') or
                               await page.query_selector('button[type="submit"]'))
                     if li_btn:
                         await li_btn.click()
+                        log.info(f"[Activate] 已点击登录按钮，等待跳转...")
+                        
                     await asyncio.sleep(8)
                     token = await page.evaluate("localStorage.getItem('token')")
+                    if token:
+                        log.info(f"[Activate] 重新登录成功，成功获取 Token！")
+                    else:
+                        log.warning(f"[Activate] 重新登录后依然未获取到 Token，当前页面URL: {page.url}")
                 except Exception as e:
                     log.warning(f"[Activate] 激活后登录异常: {e}")
 
             if token:
                 acc.token = token
                 acc.valid = True
+                
+                # Extract fresh cookies
+                log.info("[Activate] 提取最新 cookies...")
+                all_cookies = await page.context.cookies()
+                cookie_str = "; ".join(f"{c.get('name','')}={c.get('value','')}" for c in all_cookies if "qwen" in c.get("domain", ""))
+                if cookie_str:
+                    acc.cookies = cookie_str
+                    
                 log.info(f"[Activate] {acc.email} 激活成功，token已更新")
                 return True
             log.warning(f"[Activate] {acc.email} 激活后未能获取token")
