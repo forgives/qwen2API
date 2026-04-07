@@ -208,8 +208,10 @@ class QwenClient:
                 elif "unauthorized" in err_msg or "401" in err_msg or "403" in err_msg:
                     self.account_pool.mark_invalid(acc)
                     exclude.add(acc.email)
-                    # 触发自愈
-                    asyncio.create_task(self.auth_resolver.refresh_token(acc))
+                    if "activation" in err_msg or "pending" in err_msg:
+                        acc.activation_pending = True
+                    # 触发全量自愈 (包含激活邮件)
+                    asyncio.create_task(self.auth_resolver.auto_heal_account(acc))
                 else:
                     # 瞬时错误，不标记死号，但排除它并重试下一个
                     exclude.add(acc.email)

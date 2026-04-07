@@ -488,6 +488,33 @@ class AuthResolver:
     def __init__(self, pool: AccountPool):
         self.pool = pool
 
+    async def auto_heal_account(self, acc: Account):
+        """Background task to refresh token. If successful, marks account valid.
+        If refresh fails or account is pending activation, tries to activate via email."""
+        try:
+            ok = await self.refresh_token(acc)
+            if ok:
+                if not getattr(acc, 'activation_pending', False):
+                    acc.valid = True
+                    await self.pool.save()
+                    log.info(f"[BGRefresh] {acc.email} token刷新成功，账号已恢复")
+                    return
+                # Token refreshed but account still needs activation — don't mark valid yet
+                log.info(f"[BGRefresh] {acc.email} token刷新成功，但账号仍待激活，继续尝试激活...")
+            else:
+                log.warning(f"[BGRefresh] {acc.email} 刷新失败，尝试邮件激活...")
+            
+            activated = await activate_account(acc)
+            if activated:
+                acc.activation_pending = False
+                acc.valid = True
+                await self.pool.save()  # 持久化激活状态，重启后不再重复激活
+                log.info(f"[BGRefresh] {acc.email} 邮件激活成功，账号已恢复")
+            else:
+                log.warning(f"[BGRefresh] {acc.email} 激活失败，账号保持失效")
+        except Exception as e:
+            log.warning(f"[BGRefresh] {acc.email} 自动自愈异常: {e}")
+
     async def refresh_token(self, acc: Account) -> bool:
         """Re-login with email+password to get a fresh token. Returns True on success."""
         if not acc.email or not acc.password:
