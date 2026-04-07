@@ -205,7 +205,8 @@ def build_prompt_with_tools(messages: list, tools: list) -> str:
         used += len(line) + 2
         msg_count += 1
 
-    if tools and msg_count > 0:
+    # 原始任务保护：若第一条 user 消息被挤出了历史窗口，强制补回最前
+    if tools and messages:
         first_user = next((m for m in messages if m.get("role") == "user"), None)
         if first_user:
             t = _extract_text(first_user.get("content", ""), user_tool_mode=True)
