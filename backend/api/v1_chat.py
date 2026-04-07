@@ -116,6 +116,28 @@ async def chat_completions(request: Request):
                 has_tool_call = stop_reason == "tool_use" or stop_reason == "tool_calls"
                 
                 if has_tool_call:
+                    # 如果有思考过程，先作为 content 吐出，让用户能看到
+                    if reasoning_text:
+                        chunk = {
+                            "id": completion_id,
+                            "object": "chat.completion.chunk",
+                            "model": model,
+                            "choices": [{"index": 0, "delta": {"content": reasoning_text}, "finish_reason": None}]
+                        }
+                        yield f"data: {json.dumps(chunk)}\n\n"
+
+                    # 再吐出前置文本（如果有）
+                    txt_list = [b for b in blocks if b["type"] == "text" and b.get("text")]
+                    for blk in txt_list:
+                        chunk = {
+                            "id": completion_id,
+                            "object": "chat.completion.chunk",
+                            "model": model,
+                            "choices": [{"index": 0, "delta": {"content": blk["text"]}, "finish_reason": None}]
+                        }
+                        yield f"data: {json.dumps(chunk)}\n\n"
+
+                    # 最后吐出 tool_calls
                     tc_list = [b for b in blocks if b["type"] == "tool_use"]
                     for idx, tc in enumerate(tc_list):
                         # 1. 吐出函数名
