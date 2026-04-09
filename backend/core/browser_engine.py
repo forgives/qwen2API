@@ -233,7 +233,7 @@ class BrowserEngine:
         try:
             result = await page.evaluate(JS_FETCH, {
                 "method": method, "url": path, "token": token,
-                "body_json": json.dumps(body, ensure_ascii=False) if body else None,
+                "body_json": json.dumps(body, ensure_ascii=True) if body else None,
             })
             if result.get("status") == 0 and result.get("body", "").startswith("JS error:"):
                 needs_refresh = True
@@ -268,7 +268,7 @@ class BrowserEngine:
         if buffered:
             try:
                 res = await asyncio.wait_for(
-                    page.evaluate(JS_STREAM_FULL, {"url": url, "token": token, "payload_json": json.dumps(payload, ensure_ascii=False)}),
+                    page.evaluate(JS_STREAM_FULL, {"url": url, "token": token, "payload_json": json.dumps(payload, ensure_ascii=True)}),
                     timeout=1800,
                 )
                 if res.get("status") != 200:
@@ -296,7 +296,7 @@ class BrowserEngine:
             js_task = asyncio.create_task(
                 page.evaluate(JS_STREAM_CHUNKED, {
                     "url": url, "token": token,
-                    "payload_json": json.dumps(payload, ensure_ascii=False),
+                    "payload_json": json.dumps(payload, ensure_ascii=True),
                     "chat_id": chat_id
                 })
             )
