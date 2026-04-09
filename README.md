@@ -6,7 +6,7 @@
 [![Release](https://img.shields.io/github/v/release/YuJunZhiXue/qwen2API?style=flat-square)](https://github.com/YuJunZhiXue/qwen2API/releases)
 [![Docker Pulls](https://img.shields.io/docker/pulls/yujunzhixue/qwen2api?style=flat-square)](https://hub.docker.com/r/yujunzhixue/qwen2api)
 
-[![Deploy on Zeabur](https://zeabur.com/button.svg)](https://zeabur.com/templates/XXXXXX)
+[![Deploy on Zeabur](https://zeabur.com/button.svg)](https://zeabur.com/templates/qwen2api)
 [![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FYuJunZhiXue%2Fqwen2API)
 
 语言 / Language: [中文](./README.md) | [English](./README.en.md)
@@ -17,7 +17,7 @@
 
 ## 架构概览
 
-qwen2API 2.x（企业级模块化版）
+qwen2API
 
 ```mermaid
 flowchart LR
@@ -31,6 +31,7 @@ flowchart LR
             OA["OpenAI 兼容接口\n/v1/chat/completions"]
             CA["Claude 兼容接口\n/anthropic/v1/messages"]
             GA["Gemini 兼容接口\n/v1beta/models/*"]
+            IA["图片生成接口\n/v1/images/generations"]
             Admin["Admin API\n/api/admin/*"]
             WebUI["Admin Dashboard\n(React + Shadcn)"]
         end
@@ -42,17 +43,18 @@ flowchart LR
             ClientCore["Qwen Client\n(SSE 流解析与重试机制)"]
             Tool["Tool Sieve\n(##TOOL_CALL## 拦截与解析)"]
             TokenCalc["Token Calculator\n(Tiktoken 精准计费)"]
-            GC["Garbage Collector\n(15分钟定时清理孤儿会话)"]
+           GC["Garbage Collector\n(15分钟定时清理孤儿会话\n活跃会话受保护不被删除)"]
             DB["Async JSON DB\n(带锁持久化)"]
         end
     end
 
     Client --> Router
-    Router --> OA & CA & GA
+    Router --> OA & CA & GA & IA
     Router --> Admin
     Router --> WebUI
 
     OA & CA & GA --> Tool
+    IA --> ClientCore
     Tool --> ClientCore
     ClientCore -.无感重试.-> Pool
     ClientCore -.精确计费.-> TokenCalc
@@ -87,9 +89,11 @@ flowchart LR
 
 | 能力类型 | 接口/路径支持 | 详细说明 |
 |---|---|---|
-| **OpenAI 兼容** | `GET /v1/models`、`POST /v1/chat/completions`、`POST /v1/embeddings` | 完整支持 Stream 响应与函数调用；Embeddings 使用伪 Hash 模拟。 |
+| **OpenAI 兼容** | `GET /v1/models`、`POST /v1/chat/completions`、`POST /v1/embeddings` | 完整支持 Stream 响应与函数调用；支持图片意图自动识别（见下文）；Embeddings 使用伪 Hash 模拟。 |
 | **Claude 兼容** | `POST /anthropic/v1/messages` | 原生兼容 Anthropic SDK，处理复杂的 Block 结构与系统级 Prompt。 |
 | **Gemini 兼容** | `POST /v1beta/models/{model}:generateContent`、`...:streamGenerateContent` | 拦截 Google AI SDK 的专有协议体并平滑转换至底层。 |
+| **图片生成（标准接口）** | `POST /v1/images/generations` | 兼容 OpenAI DALL-E 接口规范，底层调用千问 Wan 系列 T2I 模型（`wanx2.1-t2i-plus`）。 |
+| **图片生成（意图识别）** | `POST /v1/chat/completions` | 在 Chat 请求中自动检测"生成图片/draw/generate image"等关键词，无缝切换到 T2I 管道，非流式响应额外附带 `images[]` 字段。 |
 | **多账号并发轮询** | - | 自动 Token 刷新，支持手机号/邮箱/临时验证码等多路径登录自愈，内建负载均衡器。 |
 | **并发队列控制** | - | 为每个账号设定 In-flight 上限与排队槽位，防范封禁风险。 |
 | **Tool Calling** | - | 完美对齐 OpenAI 流式标准；支持带思考过程的工具调度；支持非法 JSON 自我纠错机制。 |
@@ -120,19 +124,160 @@ flowchart LR
 | 客户端请求传入的模型名 (Alias) | 实际调用的底层目标模型 |
 |---|---|
 | `gpt-4o` / `gpt-4-turbo` / `o1` / `o3` | **`qwen3.6-plus`** |
-| `gpt-4o-mini` / `gpt-3.5-turbo` / `o1-mini` | **`qwen3.5-flash`** |
-| `claude-3-5-sonnet` / `claude-opus-4-6` | **`qwen3.6-plus`** |
-| `claude-3-haiku` / `claude-3-5-haiku-latest` | **`qwen3.5-flash`** |
+| `gpt-4o-mini` / `gpt-3.5-turbo` / `o1-mini` | **`qwen3.6-plus`** |
+| `claude-3-5-sonnet` / `claude-opus-4-6` / `claude-sonnet-4-6` | **`qwen3.6-plus`** |
+| `claude-3-haiku` / `claude-3-5-haiku` / `claude-haiku-4-5` | **`qwen3.6-plus`** |
 | `gemini-2.5-pro` / `gemini-1.5-pro` | **`qwen3.6-plus`** |
 | `deepseek-chat` / `deepseek-reasoner` | **`qwen3.6-plus`** |
 
-> **提示**：如果未命中上述映射表，系统默认将 fallback 回落到 `qwen3.6-plus`。
+> **提示**：所有别名统一路由至 `qwen3.6-plus`（chat.qwen.ai 当前最新旗舰模型，支持 t2t / t2i / t2v / 深度搜索等全部能力）。如果未命中映射表，系统同样 fallback 到 `qwen3.6-plus`。
+
+---
+
+## 图片生成 (Text-to-Image)
+
+网关提供兼容 OpenAI `images/generations` 规范的图片生成接口，底层调用通义千问 Web 版内置的 **Wan** 系列 T2I 模型。
+
+**接口地址**：`POST /v1/images/generations`
+
+**图片模型路由**
+
+| 请求传入的 model 名 | 实际调用的底层模型 |
+|---|---|
+| `dall-e-3` / `qwen-image` / `qwen-image-plus` | **`wanx2.1-t2i-plus`**（高质量，默认） |
+| `dall-e-2` / `qwen-image-turbo` | **`wanx2.1-t2i-turbo`**（快速版） |
+| `wanx2.1-t2i-plus` | **`wanx2.1-t2i-plus`** |
+| `wanx2.1-t2i-turbo` | **`wanx2.1-t2i-turbo`** |
+
+**请求示例（curl）**：
+
+```bash
+curl http://127.0.0.1:7860/v1/images/generations \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -d '{
+    "model": "dall-e-3",
+    "prompt": "一只赛博朋克风格的猫，霓虹灯背景，超写实",
+    "n": 1,
+    "size": "1024x1024"
+  }'
+```
+
+**返回示例**：
+
+```json
+{
+  "created": 1712345678,
+  "data": [
+    {
+      "url": "https://wanx.alicdn.com/wanx/...",
+      "revised_prompt": "一只赛博朋克风格的猫，霓虹灯背景，超写实"
+    }
+  ]
+}
+```
+
+**OpenAI SDK 调用示例（Python）**：
+
+```python
+from openai import OpenAI
+
+client = OpenAI(
+    api_key="YOUR_API_KEY",
+    base_url="http://127.0.0.1:7860/v1"
+)
+
+response = client.images.generate(
+    model="dall-e-3",
+    prompt="一只赛博朋克风格的猫，霓虹灯背景，超写实",
+    n=1,
+    size="1024x1024"
+)
+print(response.data[0].url)
+```
+
+> **注意**：由于使用千问 Web 版内部 T2I 接口，生成耗时约 15–45 秒，生成的图片 URL 有效期较短（阿里云 OSS 临时签名链接），请及时下载保存。
+
+---
+
+## Chat 接口图片意图自动识别
+
+`/v1/chat/completions` 现在具备**图片生成意图自动识别**能力。无需单独调用图片接口，只需在普通 Chat 请求中提及生成图片的需求，系统即可自动路由到 T2I 管道并返回图片结果。
+
+**触发关键词**（中英文均支持）：
+
+| 意图 | 触发词示例 |
+|---|---|
+| **生成图片 (t2i)** | 生成图片、画一张、画个、draw、generate image、create image、make image、文生图 |
+| **生成视频 (t2v)** | 生成视频、文生视频、generate video、make video（链路预留，待验证） |
+
+**非流式响应**（`"stream": false`）额外返回 `images[]` 字段：
+
+```json
+{
+  "id": "chatcmpl-xxx",
+  "object": "chat.completion",
+  "choices": [{
+    "message": {
+      "role": "assistant",
+      "content": "![generated](https://wanx.alicdn.com/...)"
+    },
+    "finish_reason": "stop"
+  }],
+  "images": ["https://wanx.alicdn.com/..."]
+}
+```
+
+**示例（curl）**：
+
+```bash
+curl http://127.0.0.1:7860/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -d '{
+    "model": "gpt-4o",
+    "stream": false,
+    "messages": [{"role": "user", "content": "帮我画一张赛博朋克猫咪的图片"}]
+  }'
+```
 
 ---
 
 ## 快速开始
 
-### 方式一：本地运行
+### 推荐：Docker Compose 一键部署
+
+```bash
+cp .env.example .env
+# 必改：ADMIN_KEY
+# 按需修改：BROWSER_POOL_SIZE / MAX_INFLIGHT / ACCOUNT_MIN_INTERVAL_MS
+
+docker compose up -d --build
+```
+
+启动后：
+- WebUI / API: `http://127.0.0.1:7860`
+- 健康检查: `GET /healthz`
+- 就绪检查: `GET /readyz`
+
+### 推荐安全默认值（单账号）
+
+- `ENGINE_MODE=hybrid`
+- `BROWSER_POOL_SIZE=2`
+- `MAX_INFLIGHT=1`
+- `ACCOUNT_MIN_INTERVAL_MS=1200`
+- `REQUEST_JITTER_MIN_MS=120`
+- `REQUEST_JITTER_MAX_MS=360`
+- `MAX_RETRIES=2`
+- `TOOL_MAX_RETRIES=2`
+- `EMPTY_RESPONSE_RETRIES=1`
+
+说明：
+- 主聊天请求、建会话、删会话现在都优先走浏览器环境，httpx 只做兜底。
+- 上述默认值偏保守，目标是降低单账号在 Claude Code 工具链下的自动化痕迹与封控风险。
+- `data/` 与 `logs/` 需要持久化挂载，账号、用户和配置都保存在这里。
+
+### 本地开发启动
 
 **前置环境要求**：
 - Python 3.10+
@@ -143,24 +288,15 @@ flowchart LR
 git clone https://github.com/YuJunZhiXue/qwen2API.git
 cd qwen2API
 
-# 2. 安装后端核心依赖
-cd backend
-pip install -r requirements.txt
-python -m camoufox fetch  # 必须执行：下载无头浏览器内核
-
-# 3. 安装并构建前端界面
-cd ../frontend
-npm install
-npm run build  # 编译后的静态资源会自动放入后端服务目录
-
-# 4. 退回根目录，启动服务
-cd ..
+# 2. 一键启动（自动安装依赖、下载浏览器内核、构建前端）
 python start.py
 ```
 
 启动后：
-- **WebUI 控制台**：通过 `http://localhost:8080` 访问。
-- **API 网关地址**：默认绑定 `http://localhost:8080`。
+- **WebUI 控制台**：通过 `http://127.0.0.1:7860` 访问。
+- **API 网关地址**：默认绑定 `http://127.0.0.1:7860`。
+
+> 首次启动需要下载 Camoufox 浏览器内核与构建前端，耗时较长，请耐心等待。
 
 ### 方式二：Docker / Docker Compose (推荐)
 
@@ -172,12 +308,19 @@ git clone https://github.com/YuJunZhiXue/qwen2API.git
 cd qwen2API
 
 # 2. 启动服务编排
-docker-compose up -d
+docker compose up -d
 
 # 3. 实时查看日志
-docker-compose logs -f
+docker compose logs -f
 ```
-启动完成后，默认会将容器的 `8080` 端口映射至宿主机。通过 `http://localhost:8080` 即可进入控制台。更新镜像可执行 `docker-compose up -d --build`。
+
+启动完成后，服务采用前后端分离部署：
+- **后端 API 网关**：`http://127.0.0.1:7860`（API 调用入口）
+- **前端 WebUI 控制台**：`http://127.0.0.1:7861`（管理界面）
+
+更新镜像可执行 `docker compose up -d --build`。
+
+> **注意**：容器内无头浏览器需要共享内存，`docker-compose.yml` 已配置 `shm_size: 256m`，如遇浏览器崩溃可适当增大该值。
 
 ### 方式三：Zeabur 一键部署
 
@@ -185,12 +328,17 @@ docker-compose logs -f
 2. 部署完成后，访问生成的域名进入管理台。
 3. 默认需配置环境变量 `ADMIN_KEY` 作为后台登录鉴权。
 
-### 方式四：Vercel 代理部署
+### 方式四：Vercel 前端 + 独立后端
 
-1. Fork 仓库至个人 GitHub。
-2. 在 Vercel 工作台导入项目。
-3. 配置必要环境变量（注：由于 Serverless 架构限制，无法内部长驻无头浏览器，此方案通常作为代理层接入外部独立部署的无头节点）。
-4. 部署并绑定域名。
+由于 Serverless 架构限制，Vercel 无法长驻无头浏览器，通常作为**纯前端代理层**配合独立部署的后端节点使用。
+
+1. Fork 仓库至个人 GitHub，进入 `frontend/` 目录。
+2. 在 Vercel 工作台导入 `frontend/` 子目录。
+3. 配置环境变量：
+   ```
+   VITE_API_BASE_URL=https://your-backend-domain.com
+   ```
+4. 部署并绑定域名。后端节点需单独部署（Docker 或云服务器），确保可公网访问。
 
 ---
 
