@@ -167,8 +167,12 @@ class BrowserEngine:
             )
             cache_dir = result.stdout.strip()
             if cache_dir:
-                exe_name = "camoufox.exe" if os.name == "nt" else "camoufox"
-                exe_path = os.path.join(cache_dir, exe_name)
+                if os.name == "nt":
+                    exe_path = os.path.join(cache_dir, "camoufox.exe")
+                elif sys.platform == "darwin":
+                    exe_path = os.path.join(cache_dir, "Camoufox.app", "Contents", "MacOS", "camoufox")
+                else:
+                    exe_path = os.path.join(cache_dir, "camoufox-bin")
                 if os.path.exists(exe_path):
                     return
         except Exception:
